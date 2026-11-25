@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" href="data:," />
+  <title>Middlesex County Food & Mental Health GeoAI Explorer</title>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; display: flex; height: 100vh; }
+    #sidebar { width: 360px; padding: 16px; background: #f8fafc; border-right: 1px solid #cbd5e1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+    #sidebar > * { flex-shrink: 0; } /* let the sidebar scroll instead of squashing the question box */
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+    #show-results { display: none; position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2; padding: 8px 16px; font-size: 13px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25); }
+    #map { flex: 1; min-height: 0; }
+    #results { display: none; height: 36vh; flex-direction: column; border-top: 1px solid #cbd5e1; background: #fff; }
+    #results-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; font-size: 13px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+    #results-header button { padding: 4px 10px; font-size: 12px; }
+    #results-scroll { overflow: auto; flex: 1; }
+    #results table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    #results th { position: sticky; top: 0; background: #f1f5f9; text-align: left; padding: 6px 10px; border-bottom: 1px solid #cbd5e1; white-space: nowrap; font-weight: 600; color: #334155; }
+    #results td { padding: 5px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+    #results td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    #results th.num { text-align: right; }
+    #results tbody tr { cursor: pointer; }
+    #results tbody tr:hover { background: #fef9c3; }
+    #results tbody tr.active { background: #fde68a; }
+    textarea { width: 100%; height: 75px; padding: 8px; border: 1px solid #94a3b8; border-radius: 6px; box-sizing: border-box; }
+    button { padding: 10px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #64748b; }
+    #examples { display: flex; flex-direction: column; gap: 6px; }
+    button.example { padding: 6px 10px; background: #fff; color: #1e3a8a; border: 1px solid #bfdbfe; font-weight: 500; font-size: 12px; text-align: left; line-height: 1.35; }
+    button.example:hover { background: #eff6ff; border-color: #2563eb; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 8px; border-radius: 6px; font-size: 11px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2 style="margin:0;font-size:18px;">Food & Mental Health GeoAI</h2>
+    <p style="margin:0;font-size:13px;color:#475569;">Middlesex County, MA • Census Tracts</p>
+
+    <div>
+      <strong style="font-size:13px;">Spatial Clusters:</strong>
+      <div class="legend-item"><span class="swatch" style="background:#2b83ba;"></span>Low Distress / Higher Income</div>
+      <div class="legend-item"><span class="swatch" style="background:#abdda4;"></span>Moderate Distress / Mixed Food Access</div>
+      <div class="legend-item"><span class="swatch" style="background:#fdae61;"></span>Elevated Distress / Dense Retail</div>
+      <div class="legend-item"><span class="swatch" style="background:#d7191c;"></span>High Distress / Low Income &amp; Food Swamp</div>
+      <p style="margin:6px 0 0;font-size:12px;color:#475569;line-height:1.4;">
+        <strong>Food swamp:</strong> most nearby food outlets are fast food or convenience stores rather than supermarkets or greengrocers (low mRFEI). Different from a food desert, which means healthy food is far away.
+      </p>
+    </div>
+
+    <label style="font-size:13px;font-weight:600;">Ask the PostGIS Spatial Agent:</label>
+    <textarea id="question" placeholder="e.g., Highlight tracts where frequent mental distress is above 14% and mRFEI score is below 10"></textarea>
+    <div style="display:flex;gap:8px;">
+      <button onclick="runQuery()" style="flex:1;">Run AI Query</button>
+      <button class="secondary" onclick="resetHighlight()">Reset</button>
+    </div>
+
+    <div>
+      <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+        Ask in plain English about any metric on the map. Try an example (click to run):
+      </div>
+      <div id="examples">
+        <button class="example">Top 10 tracts with the highest frequent mental distress, with their mRFEI score and median family income</button>
+        <button class="example">USDA food-desert tracts where frequent mental distress is above 14%</button>
+        <button class="example">Tracts with no healthy food outlets but at least 5 fast-food or convenience stores, ordered by depression rate</button>
+        <button class="example">Mental distress hot spots (LISA High-High) and their poverty rate</button>
+        <button class="example">Tracts with median family income under $80,000 where the mRFEI score is below 10</button>
+      </div>
+    </div>
+
+    <div id="status" style="font-size:13px;color:#0f172a;"></div>
+    <pre id="sql-box" style="display:none;"></pre>
+  </div>
+
+  <div id="main">
+    <div id="map"></div>
+    <button id="show-results" onclick="showResults()"></button>
+    <div id="results">
+      <div id="results-header">
+        <span id="results-title"></span>
+        <button class="secondary" onclick="hideResults()">Hide table</button>
+      </div>
+      <div id="results-scroll"><table><thead></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [-71.28, 42.42], // Centered near Waltham / Middlesex County
+      zoom: 10
+    });
+
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+
+    map.on('load', async () => {
+      const res = await fetch('/api/tracts');
+      const geojson = await res.json();
+
+      map.addSource('tracts', { type: 'geojson', data: geojson });
+      map.addSource('highlighted', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+      // Insert our layers beneath the basemap's first label layer so town/road
+      // names stay on top of the colored tracts instead of being washed out.
+      const firstLabelId = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+
+      // Make place names (cities, towns, villages) darker, bolder, and haloed.
+      for (const layer of map.getStyle().layers) {
+        if (layer.type === 'symbol' && layer.id.startsWith('place')) {
+          map.setPaintProperty(layer.id, 'text-color', '#0f172a');
+          map.setPaintProperty(layer.id, 'text-halo-color', '#ffffff');
+          map.setPaintProperty(layer.id, 'text-halo-width', 2);
+          map.setLayoutProperty(layer.id, 'text-font', ['Montserrat SemiBold', 'Open Sans Bold']);
+        }
+      }
+
+      // Base layer colored by spatial cluster
+      map.addLayer({
+        id: 'tracts-fill',
+        type: 'fill',
+        source: 'tracts',
+        paint: {
+          'fill-color': [
+            'match', ['get', 'cluster_label'],
+            'Low Distress / Higher Income', '#2b83ba',
+            'Moderate Distress / Mixed Food Access', '#abdda4',
+            'Elevated Distress / Dense Retail', '#fdae61',
+            'High Distress / Low Income & Food Swamp', '#d7191c',
+            '#cbd5e1'
+          ],
+          'fill-opacity': 0.65,
+          'fill-outline-color': '#475569'
+        }
+      }, firstLabelId);
+
+      // Highlight layers for AI Agent matches: bright fill + heavy outline
+      map.addLayer({
+        id: 'highlighted-fill',
+        type: 'fill',
+        source: 'highlighted',
+        paint: { 'fill-color': '#facc15', 'fill-opacity': 0.85 }
+      }, firstLabelId);
+      map.addLayer({
+        id: 'highlighted-outline',
+        type: 'line',
+        source: 'highlighted',
+        paint: { 'line-color': '#111827', 'line-width': 2.5 }
+      }, firstLabelId);
+
+      // Tract selected from the results table
+      map.addSource('selected', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'selected-outline',
+        type: 'line',
+        source: 'selected',
+        paint: { 'line-color': '#7c3aed', 'line-width': 4 }
+      }, firstLabelId);
+
+      map.on('mousemove', 'tracts-fill', (e) => {
+        const p = e.features[0].properties;
+        popup.setLngLat(e.lngLat).setHTML(`
+          <strong>${p.tract_name}</strong><br/>
+          Cluster: ${p.cluster_label}<br/>
+          Mental Distress: ${p.frequent_mental_distress_pct ?? 'N/A'}%<br/>
+          mRFEI Score: ${Number(p.mrfei_score).toFixed(1)}<br/>
+          Median Income: $${Number(p.median_family_income || 0).toLocaleString()}
+        `).addTo(map);
+      });
+
+      map.on('mouseleave', 'tracts-fill', () => popup.remove());
+    });
+
+    // Example questions: fill the box and run immediately
+    document.querySelectorAll('button.example').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.getElementById('question').value = btn.textContent.trim();
+        runQuery();
+      });
+    });
+
+    async function runQuery() {
+      const q = document.getElementById('question').value.trim();
+      if (!q) return;
+      document.getElementById('status').innerText = 'Running LLM spatial query...';
+
+      const res = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        document.getElementById('status').innerText = 'Error: ' + data.detail;
+        return;
+      }
+
+      const features = (data.geojson?.features || []).filter((f) => f.geometry);
+      map.getSource('highlighted').setData({ type: 'FeatureCollection', features });
+
+      const sqlBox = document.getElementById('sql-box');
+      sqlBox.style.display = 'block';
+      sqlBox.innerText = data.sql;
+
+      renderResultsTable(features);
+
+      if (features.length === 0) {
+        map.setPaintProperty('tracts-fill', 'fill-opacity', 0.65);
+        document.getElementById('status').innerHTML =
+          `<strong>No tracts matched.</strong> ${data.explanation}`;
+        return;
+      }
+
+      // Fade the other tracts so the matches stand out, then zoom to them
+      map.setPaintProperty('tracts-fill', 'fill-opacity', 0.2);
+      map.fitBounds(featureBounds(features), { padding: 60, maxZoom: 13, duration: 800 });
+      document.getElementById('status').innerHTML =
+        `<strong>Matched ${features.length} tracts</strong> (yellow): ${data.explanation}`;
+    }
+
+    // Bounding box [[minLng, minLat], [maxLng, maxLat]] of a list of GeoJSON features
+    function featureBounds(features) {
+      const b = [[Infinity, Infinity], [-Infinity, -Infinity]];
+      const visit = (c) => {
+        if (typeof c[0] === 'number') {
+          b[0][0] = Math.min(b[0][0], c[0]); b[0][1] = Math.min(b[0][1], c[1]);
+          b[1][0] = Math.max(b[1][0], c[0]); b[1][1] = Math.max(b[1][1], c[1]);
+        } else c.forEach(visit);
+      };
+      features.forEach((f) => visit(f.geometry.coordinates));
+      return b;
+    }
+
+    function resetHighlight() {
+      map.getSource('highlighted').setData({ type: 'FeatureCollection', features: [] });
+      map.setPaintProperty('tracts-fill', 'fill-opacity', 0.65);
+      document.getElementById('status').innerText = '';
+      document.getElementById('sql-box').style.display = 'none';
+      resultCount = 0;  // Reset clears the results, so no "Show" button either
+      map.getSource('selected').setData({ type: 'FeatureCollection', features: [] });
+      hideResults();
+    }
+
+    // ---------- Results table ----------
+    const COLUMN_LABELS = {
+      geoid: 'GEOID', tract_name: 'Tract', area_sqkm: 'Area (km²)',
+      frequent_mental_distress_pct: 'Mental distress %', depression_pct: 'Depression %',
+      lila_1and10_flag: 'Food desert', low_income_flag: 'Low income',
+      poverty_rate: 'Poverty %', median_family_income: 'Median family income',
+      healthy_outlet: 'Healthy outlets', less_healthy_outlet: 'Less-healthy outlets',
+      healthy_per_sqkm: 'Healthy / km²', less_healthy_per_sqkm: 'Less-healthy / km²',
+      mrfei_score: 'mRFEI', est_veg_meat_share_pct: 'Est. veg share %',
+      cluster_id: 'Cluster ID', cluster_label: 'Cluster', lisa_cluster: 'LISA', lisa_pvalue: 'LISA p-value',
+    };
+    const label = (col) => COLUMN_LABELS[col] ?? col.replace(/_/g, ' ');
+    const INTEGER_COLUMNS = new Set(['healthy_outlet', 'less_healthy_outlet', 'cluster_id']);
+
+    function formatCell(col, v) {
+      if (v === null || v === undefined || v === '') return '—';
+      if (typeof v !== 'number') return String(v);
+      if (col.endsWith('_flag')) return v === 1 ? 'Yes' : 'No';
+      if (col.includes('income')) return '$' + Math.round(v).toLocaleString();
+      if (col.endsWith('pvalue')) return v.toFixed(3);
+      // Decide by column, not value: JSON turns 26.0 into 26, which would mix "26" and "23.4"
+      if (INTEGER_COLUMNS.has(col)) return Math.round(v).toLocaleString();
+      return v.toFixed(1);
+    }
+
+    function renderResultsTable(features) {
+      const panel = document.getElementById('results');
+      const thead = panel.querySelector('thead');
+      const tbody = panel.querySelector('tbody');
+      thead.innerHTML = ''; tbody.innerHTML = '';
+      map.getSource('selected').setData({ type: 'FeatureCollection', features: [] });
+
+      resultCount = features.length;
+      if (features.length === 0) { hideResults(); return; }
+
+      // Columns in the order the SQL returned them
+      const cols = Object.keys(features[0].properties);
+      const isNum = Object.fromEntries(cols.map((c) =>
+        [c, features.some((f) => typeof f.properties[c] === 'number') && !c.endsWith('_flag')]));
+
+      const hr = document.createElement('tr');
+      for (const c of ['#', ...cols]) {
+        const th = document.createElement('th');
+        th.textContent = c === '#' ? '#' : label(c);
+        if (c === '#' || isNum[c]) th.className = 'num';
+        hr.appendChild(th);
+      }
+      thead.appendChild(hr);
+
+      features.forEach((f, i) => {
+        const tr = document.createElement('tr');
+        const cells = [[ '#', i + 1 ], ...cols.map((c) => [c, f.properties[c]])];
+        for (const [c, v] of cells) {
+          const td = document.createElement('td');
+          td.textContent = c === '#' ? v : formatCell(c, v);
+          if (c === '#' || isNum[c]) td.className = 'num';
+          tr.appendChild(td);
+        }
+        tr.addEventListener('click', () => selectRow(tr, f));
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('results-title').innerHTML =
+        `<strong>${features.length} result${features.length === 1 ? '' : 's'}</strong> · click a row to zoom to the tract`;
+      showResults();
+    }
+
+    // Number of rows in the current results table (0 = nothing to show)
+    let resultCount = 0;
+
+    function showResults() {
+      document.getElementById('results').style.display = 'flex';
+      document.getElementById('show-results').style.display = 'none';
+      map.resize();
+    }
+
+    function selectRow(tr, feature) {
+      document.querySelectorAll('#results tbody tr.active').forEach((r) => r.classList.remove('active'));
+      tr.classList.add('active');
+      map.getSource('selected').setData({ type: 'FeatureCollection', features: [feature] });
+      map.fitBounds(featureBounds([feature]), { padding: 80, maxZoom: 14, duration: 600 });
+    }
+
+    // Hide the table but keep its rows; a floating button brings it back
+    function hideResults() {
+      document.getElementById('results').style.display = 'none';
+      const btn = document.getElementById('show-results');
+      btn.textContent = `Show results table (${resultCount})`;
+      btn.style.display = resultCount > 0 ? 'block' : 'none';
+      map.resize();
+    }
+  </script>
+</body>
+</html>
