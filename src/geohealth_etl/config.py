@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -11,6 +12,10 @@ DB_URL = os.getenv(
 )
 # Free key from https://api.census.gov/data/key_signup.html (required by the ACS API)
 CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
+
+# Raw downloads (EJScreen subset, tree canopy raster, SVI, tract crosswalk) are cached here
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_CACHE_DIR = Path(os.getenv("GEOHEALTH_DATA_CACHE", PROJECT_ROOT / "data_cache"))
 
 TABLE_NAME = "tract_food_mental_health"
 

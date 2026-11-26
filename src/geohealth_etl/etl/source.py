@@ -6,6 +6,11 @@ import geopandas as gpd
 import osmnx as ox
 from geohealth_etl.config import LOCAL_CRS, STORAGE_CRS
 
+# The county's convex hull is ~3,125 km², just over OSMnx's 2,500 km² default, which would split
+# the query into several Overpass requests that each wait for a public-server rate-limit slot.
+ox.settings.max_query_area_size = 4_000_000_000
+ox.settings.requests_timeout = 300
+
 
 def fetch_census_tracts(state_fips: str, county_fips: str) -> gpd.GeoDataFrame:
     print("1. Fetching US Census TIGER/Line tract geometries...")
@@ -17,11 +22,11 @@ def fetch_census_tracts(state_fips: str, county_fips: str) -> gpd.GeoDataFrame:
 
 
 def fetch_cdc_places(state_abbr: str) -> pd.DataFrame:
-    print("2. Fetching CDC PLACES mental health metrics...")
+    print("2. Fetching CDC PLACES mental health estimates...")
     # CDC PLACES: Local Data for Better Health, Census Tract Data (Socrata API)
     cdc_url = "https://data.cdc.gov/resource/cwsq-ngmh.csv"
     params = {
-        "$where": f"stateabbr='{state_abbr}' AND measureid in('MHLTH', 'DEPRESSION')",
+        "$where": f"stateabbr='{state_abbr}' AND measureid in('MHLTH', 'DEPRESSION', 'LONELINESS')",
         "$select": "locationname, measureid, data_value",
         "$limit": 50000,
     }
@@ -37,7 +42,11 @@ def fetch_cdc_places(state_abbr: str) -> pd.DataFrame:
     ).reset_index()
     pivoted.columns.name = None
     return pivoted.rename(
-        columns={"MHLTH": "frequent_mental_distress_pct", "DEPRESSION": "depression_pct"}
+        columns={
+            "MHLTH": "frequent_mental_distress_pct",
+            "DEPRESSION": "depression_pct",
+            "LONELINESS": "loneliness_pct",
+        }
     )
 
 
@@ -68,10 +77,11 @@ def fetch_usda_food_access(state_fips: str) -> pd.DataFrame:
 
 
 def fetch_osm_food_pois(boundary_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    print("4. Fetching OpenStreetMap food retail POIs via OSMnx...")
+    print("4. Fetching OpenStreetMap food and alcohol retail POIs via OSMnx...")
+    # One query for food and alcohol outlets (MassGIS has no layer for either)
     tags = {
-        "amenity": ["fast_food", "marketplace"],
-        "shop": ["convenience", "supermarket", "greengrocer"],
+        "amenity": ["fast_food", "marketplace", "bar", "pub"],
+        "shop": ["convenience", "supermarket", "greengrocer", "alcohol"],
     }
     # The geocoded county boundary has so many vertices that Overpass rejects the
     # query (413). Query a simple convex hull instead; the later sjoin clips to tracts.
@@ -79,10 +89,12 @@ def fetch_osm_food_pois(boundary_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     pois = ox.features_from_polygon(hull, tags=tags)
     pois = pois.reset_index()
 
-    # Classify into healthy vs. less-healthy food retail proxies
+    # Classify into healthy vs. less-healthy food retail proxies, plus alcohol outlets
     def classify_food(row):
         shop = str(row.get("shop", ""))
         amenity = str(row.get("amenity", ""))
+        if shop == "alcohol" or amenity in ["bar", "pub"]:
+            return "alcohol_outlet"
         if shop in ["supermarket", "greengrocer"] or amenity == "marketplace":
             return "healthy_outlet"
         if amenity == "fast_food" or shop == "convenience":
