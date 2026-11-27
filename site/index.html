@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" href="data:," />
+  <title>Middlesex Environmental Burden Explorer</title>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    :root { --ink: #0f172a; --muted: #475569; --line: #cbd5e1; --panel: #f8fafc; --accent: #2563eb; }
+    body { margin: 0; font-family: system-ui, sans-serif; display: flex; height: 100vh; color: var(--ink); }
+    #sidebar { width: 370px; padding: 16px; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; overflow-y: auto; box-sizing: border-box; }
+    #sidebar > * { flex-shrink: 0; } /* let the sidebar scroll instead of squashing the question box */
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+    #map-wrap { flex: 1; min-height: 0; position: relative; }
+    #map { position: absolute; inset: 0; }
+    h2 { margin: 0; font-size: 18px; }
+    .sub { margin: 0; font-size: 13px; color: var(--muted); }
+    .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
+    select { width: 100%; padding: 6px 8px; border: 1px solid #94a3b8; border-radius: 6px; font-size: 13px; background: #fff; }
+    label.inline { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 3px 0; }
+    .note { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 6px 0 0; }
+    .warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 8px; }
+
+    /* Mode tabs */
+    #modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: #e2e8f0; padding: 3px; border-radius: 8px; }
+    #modes button { background: transparent; color: var(--muted); padding: 6px 4px; font-size: 12px; font-weight: 600; border-radius: 6px; }
+    #modes button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+    .mode-panel { display: none; }
+    .mode-panel.active { display: block; }
+
+    /* EJ explanation */
+    details.ej-help { margin: 8px 0; font-size: 12px; color: #334155; line-height: 1.45; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 6px; padding: 6px 8px; }
+    details.ej-help summary { cursor: pointer; font-weight: 600; color: #5b21b6; }
+    details.ej-help p { margin: 6px 0; }
+    details.ej-help ul { margin: 4px 0; padding-left: 18px; }
+    details.ej-help li { margin-bottom: 3px; }
+    .ej-row { margin: 6px 0 0 8px; padding: 6px 8px; background: #f5f3ff; border-radius: 6px; font-size: 12px; line-height: 1.4; }
+
+    /* Burden explainer */
+    #burden-how { margin-top: 10px; font-size: 12px; color: #334155; }
+    #burden-how summary { cursor: pointer; font-weight: 600; color: var(--accent); font-size: 13px; }
+    ol.how { padding-left: 18px; margin: 8px 0; line-height: 1.45; }
+    ol.how li { margin-bottom: 6px; }
+    .ex-head { margin: 8px 0 4px; font-size: 12px; }
+    .muted { color: #64748b; font-weight: 400; }
+    table.ex { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.ex th { text-align: left; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0; padding: 3px 2px; }
+    table.ex td { padding: 2px; vertical-align: top; }
+    table.ex td.n, table.ex th:nth-child(n+2) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.ex tr.theme td { border-top: 1px dashed #cbd5e1; border-bottom: 1px solid #e2e8f0; padding: 3px 2px 6px; background: #f8fafc; }
+    .ex-step { margin-top: 6px; padding: 6px 8px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; line-height: 1.45; }
+
+    /* Legends */
+    .ramp { display: flex; height: 12px; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+    .ramp span { flex: 1; }
+    .ramp-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+    #show-group-btn { width: 100%; margin: 2px 0 8px; padding: 8px 10px; background: #fff; color: #5b21b6; border: 1.5px solid #c4b5fd; font-size: 13px; }
+    #show-group-btn:hover { background: #f5f3ff; }
+    #show-group-btn.on { background: #5b21b6; color: #fff; border-color: #5b21b6; }
+    #show-group-btn:disabled { opacity: .5; cursor: not-allowed; }
+    #affected-bivar-wrap { display: none; gap: 12px; align-items: flex-start; margin-bottom: 8px; padding: 8px; background: #faf5ff; border-radius: 6px; }
+    #bivar { display: grid; grid-template-columns: 18px repeat(3, 34px); grid-template-rows: repeat(3, 34px) 18px; gap: 2px; margin-top: 8px; font-size: 10px; color: var(--muted); }
+    #bivar .cell { display: flex; align-items: center; justify-content: center; font-size: 11px; color: #0f172a; border-radius: 2px; }
+    #bivar .ylab { writing-mode: vertical-rl; transform: rotate(180deg); grid-row: 1 / span 3; display: flex; align-items: center; justify-content: center; }
+    #bivar .xlab { grid-column: 2 / span 3; text-align: center; }
+
+    /* Who's affected */
+    #affected .row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 3px 0; line-height: 1.35; }
+    #affected .val { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+    #affected .cmp-title { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+    #affected .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+    svg.scatter { display: block; margin-top: 6px; }
+    svg.scatter text { font-size: 10px; fill: #64748b; }
+    svg.scatter text.atitle { font-size: 10.5px; fill: #334155; font-weight: 600; }
+    svg.scatter .grid { stroke: #eef2f7; }
+    svg.scatter .axis { stroke: #94a3b8; }
+    svg.scatter circle[data-geoid] { cursor: pointer; }
+    svg.scatter .trend { fill: none; stroke: #0f172a; stroke-width: 2; }
+    svg.scatter .trend-pt { fill: #fff; stroke: #0f172a; stroke-width: 1.5; }
+
+    /* Buttons / query */
+    textarea { width: 100%; height: 70px; padding: 8px; border: 1px solid #94a3b8; border-radius: 6px; box-sizing: border-box; font: inherit; font-size: 13px; }
+    button { padding: 10px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #64748b; }
+    #use-cases { display: flex; flex-direction: column; gap: 6px; }
+    button.use-case { display: grid; grid-template-columns: 24px 1fr; gap: 2px 8px; padding: 8px 10px; background: #fff; color: var(--ink);
+      border: 1px solid #e2e8f0; font-weight: 400; text-align: left; line-height: 1.3; }
+    button.use-case:hover { border-color: var(--accent); background: #f8fafc; }
+    button.use-case.active { border-color: var(--accent); background: #eff6ff; box-shadow: inset 3px 0 0 var(--accent); }
+    button.use-case .ic { grid-row: 1 / span 2; font-size: 18px; line-height: 1.2; }
+    button.use-case .t { font-weight: 600; font-size: 13px; }
+    button.use-case .d { font-size: 11.5px; color: var(--muted); }
+    .uc-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+    .uc-controls select { width: auto; }
+    #uc-status { font-size: 13px; line-height: 1.45; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 8px; border-radius: 6px; font-size: 11px; white-space: pre-wrap; margin: 0; }
+
+    /* Results table */
+    #show-results { display: none; position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2; padding: 8px 16px; font-size: 13px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25); }
+    #results { display: none; height: 36vh; flex-direction: column; border-top: 1px solid var(--line); background: #fff; }
+    #results-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; font-size: 13px; background: var(--panel); border-bottom: 1px solid #e2e8f0; }
+    #results-header button { padding: 4px 10px; font-size: 12px; }
+    #results-scroll { overflow: auto; flex: 1; }
+    #results table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    #results th { position: sticky; top: 0; background: #f1f5f9; text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-weight: 600; color: #334155; }
+    #results td { padding: 5px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+    #results td.num, #results th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    #results tbody tr { cursor: pointer; }
+    #results tbody tr:hover { background: #fef9c3; }
+    #results tbody tr.active { background: #fde68a; }
+
+    /* Tract profile */
+    #profile { display: none; position: absolute; top: 10px; right: 10px; width: 320px; max-height: calc(100% - 20px); overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(15, 23, 42, .18); z-index: 3; font-size: 13px; }
+    #profile header { position: sticky; top: 0; background: #fff; padding: 12px 14px 8px; border-bottom: 1px solid #e2e8f0; }
+    #profile header button { position: absolute; top: 8px; right: 8px; padding: 2px 8px; background: transparent; color: var(--muted); font-size: 18px; }
+    #profile .body { padding: 8px 14px 14px; }
+    #profile h3 { margin: 0; font-size: 15px; padding-right: 24px; }
+    #profile h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .theme-row { margin: 6px 0 2px; display: flex; justify-content: space-between; font-weight: 600; }
+    .bar { height: 6px; background: #f1f5f9; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+    .bar > span { display: block; height: 100%; }
+    .frow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 45%); gap: 2px 8px; padding: 2px 0 2px 8px; color: #334155; }
+    .frow .v { text-align: right; font-variant-numeric: tabular-nums; }
+    .frow .p { grid-column: 1 / span 2; font-size: 11px; color: #64748b; }
+    .badge { display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 8px; margin-left: 4px; vertical-align: 1px; }
+    .badge.measured { background: #dcfce7; color: #166534; }
+    .badge.proxy { background: #e0e7ff; color: #3730a3; }
+    .badge.modelled { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <div>
+      <h2>Environmental Burden Explorer</h2>
+      <p class="sub">Middlesex County, MA · 357 census tracts · who lives with which conditions</p>
+      <p class="sub" id="data-asof" style="font-size:11.5px;margin-top:2px;"></p>
+    </div>
+
+    <div id="modes">
+      <button data-mode="factor" class="active">Factor</button>
+      <button data-mode="burden">Burden</button>
+      <button data-mode="clusters">Clusters</button>
+    </div>
+
+    <!-- Factor mode -->
+    <div class="mode-panel card active" id="panel-factor">
+      <p class="section-title">Colour the map by</p>
+      <select id="factor-select"></select>
+      <div id="factor-legend"></div>
+      <p class="note" id="factor-note"></p>
+    </div>
+
+    <!-- Burden mode -->
+    <div class="mode-panel card" id="panel-burden">
+      <p class="section-title">Themes included in the burden score</p>
+      <div id="theme-checks"></div>
+      <div id="burden-legend"></div>
+      <details id="burden-how" open>
+        <summary>How is the burden score calculated?</summary>
+        <ol class="how">
+          <li><strong>Rank each factor as a percentile.</strong> Every tract is ranked against the other Middlesex tracts on each environmental factor, from the 0th to the 100th percentile. The rank is flipped where needed so that <strong>the 100th percentile always means the worst condition</strong>: most traffic and pollution, but <em>least</em> tree canopy, open space or transit. The 80th percentile means worse than about 80% of tracts.</li>
+          <li><strong>Average within each theme.</strong> A theme score is the plain average of its factors' percentiles (shown as "avg. … percentile"), e.g. Green space = (tree canopy + open space + distance to open space) ÷ 3.</li>
+          <li><strong>Average the themes, then rank.</strong> The burden score is the average of the ticked theme scores, so each theme counts equally however many factors it has. That average is ranked again to give the tract's <strong>overall burden percentile</strong>, which colours the map: the darkest colour is the 80th–100th percentile, the most burdened fifth of the county.</li>
+        </ol>
+        <p class="note" style="margin-top:0;">Who lives in a tract (race, immigration, income) and the modelled mental-health estimates are <strong>not</strong> part of the score; they're compared with it in the box below. Percentiles are relative to this county only, not to any health standard.</p>
+        <div id="burden-example"></div>
+      </details>
+    </div>
+
+    <!-- Clusters mode -->
+    <div class="mode-panel card" id="panel-clusters">
+      <p class="section-title">K-means clusters (original food &amp; distress model)</p>
+      <div id="cluster-legend"></div>
+      <p class="note"><strong>Food swamp:</strong> most nearby food outlets are fast food or convenience stores rather than supermarkets or greengrocers (low mRFEI). Different from a food desert, which means healthy food is far away.</p>
+    </div>
+
+    <!-- Who's affected -->
+    <div class="card" id="affected">
+      <p class="section-title">Who's affected</p>
+      <label class="inline" style="margin-bottom:6px;">Compare by
+        <select id="affected-group" style="flex:1;"></select>
+      </label>
+      <button id="show-group-btn" type="button"></button>
+      <div id="group-outline-note" class="note" style="display:none;margin:-2px 0 8px;padding:6px 8px;background:#faf5ff;border-radius:6px;"></div>
+      <div id="affected-bivar-wrap">
+        <div id="bivar"></div>
+        <p class="note" id="bivar-note" style="margin:0;"></p>
+      </div>
+      <div id="affected-ej-help"></div>
+      <div id="affected-body"></div>
+    </div>
+
+    <!-- Priority tracts for typical use cases -->
+    <div class="card">
+      <p class="section-title">Find priority tracts</p>
+      <div class="uc-controls">
+        <label class="inline" style="margin:0;">Show the top
+          <select id="uc-k"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select>
+          tracts</label>
+        <label class="inline" style="margin:0;"><input type="checkbox" id="uc-weight-group" checked>
+          <span id="uc-weight-label">and prioritise the chosen group</span></label>
+      </div>
+      <div id="use-cases"></div>
+      <div id="uc-status" style="margin-top:8px;"></div>
+      <button class="secondary" id="uc-clear" style="display:none;margin-top:8px;width:100%;" onclick="resetHighlight()">Clear selection</button>
+    </div>
+
+  </div>
+
+  <div id="main">
+    <!-- Map area: the profile panel and "show table" button float over the map, never over the table -->
+    <div id="map-wrap">
+      <div id="map"></div>
+      <aside id="profile">
+        <header><button onclick="closeProfile()" aria-label="Close">×</button><h3 id="profile-title"></h3><div id="profile-sub" class="sub"></div></header>
+        <div class="body" id="profile-body"></div>
+      </aside>
+      <button id="show-results" onclick="showResults()"></button>
+    </div>
+    <div id="results">
+      <div id="results-header">
+        <span id="results-title"></span>
+        <button class="secondary" onclick="hideResults()">Hide table</button>
+      </div>
+      <div id="results-scroll"><table><thead></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+
+  <script>
+    // ================================================================ constants
+    const EXPOSURE_RAMP = ['#fef0d9', '#fdcc8a', '#fc8d59', '#e34a33', '#b30000'];   // 100 = worst
+    const PEOPLE_RAMP = ['#f2f0f7', '#cbc9e2', '#9e9ac8', '#756bb1', '#54278f'];     // 100 = highest share
+    const NO_DATA = '#e2e8f0';
+    // Bivariate 3×3 (rows: population low→high, cols: exposure low→high)
+    const BIVAR = [
+      ['#e8e8e8', '#e4acac', '#c85a5a'],
+      ['#b0d5df', '#ad9ea5', '#985356'],
+      ['#64acbe', '#627f8c', '#574249'],
+    ];
+    const CLUSTER_COLORS = {
+      'Low Distress / Higher Income': '#2b83ba',
+      'Moderate Distress / Mixed Food Access': '#abdda4',
+      'Elevated Distress / Dense Retail': '#fdae61',
+      'High Distress / Low Income & Food Swamp': '#d7191c',
+      'Insufficient Data': NO_DATA,
+    };
+
+    // ================================================================ state
+    let catalogue = null;           // from /api/factors
+    let factorByKey = {};
+    let tractData = null;           // GeoJSON FeatureCollection from /api/tracts
+    let tractByGeoid = {};
+    let available = new Set();      // property names present in the data
+    const state = {
+      mode: 'factor', factor: 'burden',
+      themes: new Set(), affectedGroup: 'pct_people_of_color', highlightActive: false, showGroup: false,
+    };
+
+    // ================================================================ map
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [-71.28, 42.42],
+      zoom: 10,
+    });
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '280px' });
+
+    map.on('load', async () => {
+      [catalogue, tractData] = await Promise.all([loadData('factors'), loadData('tracts')]);
+      showMeta();
+      catalogue.factors.forEach((f) => (factorByKey[f.key] = f));
+      tractData.features.forEach((f) => (tractByGeoid[f.properties.geoid] = f));
+      available = new Set(Object.keys(tractData.features[0]?.properties || {}));
+      catalogue.themes.forEach((t) => available.has(t.score_col) && state.themes.add(t.key));
+
+      map.addSource('tracts', { type: 'geojson', data: tractData, promoteId: 'geoid' });
+      map.addSource('highlighted', { type: 'geojson', data: emptyFC() });
+      map.addSource('selected', { type: 'geojson', data: emptyFC() });
+      map.addSource('groups', { type: 'geojson', data: emptyFC() });
+
+      // Layer order. The basemap stacks: land/water → a few labels → ROADS, rail, bridges, buildings → place labels.
+      // - Tract FILLS go under the roads (firstLabelId) so streets stay visible for orientation.
+      // - OUTLINES go above roads/buildings but under the place labels (outlineBeforeId). Tract boundaries often
+      //   follow streets, and white road lines drawn on top made the outlines look broken / not closed.
+      const styleLayers = map.getStyle().layers;
+      const firstLabelId = styleLayers.find((l) => l.type === 'symbol')?.id;
+      const lastNonLabel = styleLayers.reduce((last, l, i) => (l.type !== 'symbol' ? i : last), -1);
+      const outlineBeforeId = styleLayers.find((l, i) => i > lastNonLabel && l.type === 'symbol')?.id;
+      for (const layer of map.getStyle().layers) {
+        if (layer.type === 'symbol' && layer.id.startsWith('place')) {
+          map.setPaintProperty(layer.id, 'text-color', '#0f172a');
+          map.setPaintProperty(layer.id, 'text-halo-color', '#ffffff');
+          map.setPaintProperty(layer.id, 'text-halo-width', 2);
+          map.setLayoutProperty(layer.id, 'text-font', ['Montserrat SemiBold', 'Open Sans Bold']);
+        }
+      }
+
+      map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts',
+        paint: { 'fill-color': ['coalesce', ['get', '_color'], NO_DATA], 'fill-opacity': 0.75, 'fill-outline-color': '#64748b' } }, firstLabelId);
+      map.addLayer({ id: 'highlighted-fill', type: 'fill', source: 'highlighted',
+        paint: { 'fill-color': '#facc15', 'fill-opacity': 0.85 } }, firstLabelId);
+      map.addLayer({ id: 'highlighted-outline', type: 'line', source: 'highlighted',
+        paint: { 'line-color': '#111827', 'line-width': 2.5 } }, outlineBeforeId);
+      // Clusters tab: the affected group is shown as outlines (purple = most, teal = fewest),
+      // on a white casing so they stay visible on any cluster colour
+      map.addLayer({ id: 'groups-casing', type: 'line', source: 'groups',
+        paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 4, 12, 6, 14, 7.5] } }, outlineBeforeId);
+      map.addLayer({ id: 'groups-outline', type: 'line', source: 'groups',
+        paint: {
+          'line-color': ['match', ['get', '_grp'], 'high', HIGH_COLOR, LOW_COLOR],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1.8, 12, 3, 14, 4],
+        } }, outlineBeforeId);
+      map.addLayer({ id: 'selected-outline', type: 'line', source: 'selected',
+        paint: { 'line-color': '#2563eb', 'line-width': 4 } }, outlineBeforeId);
+
+      map.on('mousemove', 'tracts-fill', (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        popup.setLngLat(e.lngLat).setHTML(hoverHtml(e.features[0].properties.geoid)).addTo(map);
+      });
+      map.on('mouseleave', 'tracts-fill', () => { map.getCanvas().style.cursor = ''; popup.remove(); });
+      map.on('click', 'tracts-fill', (e) => selectTract(e.features[0].properties.geoid, false));
+
+      buildControls();
+      buildUseCases();
+      render();
+    });
+
+    const emptyFC = () => ({ type: 'FeatureCollection', features: [] });
+
+    // Data comes from one of three places, all with the same content:
+    //  - embedded in this file (`geohealth export --single-file`: opens by double-click, no server)
+    //  - data/*.json next to this page (static export on any web host)
+    //  - data/*.json served from PostGIS by `geohealth serve`
+    const DATA_FILES = { factors: 'data/factors.json', tracts: 'data/tracts.geojson', meta: 'data/meta.json' };
+    async function loadData(name) {
+      const embedded = window.GEOHEALTH_DATA?.[name];
+      if (embedded) return embedded;
+      const res = await fetch(DATA_FILES[name]);
+      if (!res.ok) throw new Error(`Could not load ${DATA_FILES[name]} (${res.status})`);
+      return res.json();
+    }
+
+    // "Data as of" line and source list from data/meta.json (optional; the page works without it)
+    async function showMeta() {
+      try {
+        const meta = await loadData('meta');
+        const el = document.getElementById('data-asof');
+        el.innerHTML = `Data as of ${meta.data_as_of} ·
+          <a href="#" id="sources-link" style="color:inherit;">sources</a>`;
+        el.querySelector('#sources-link').addEventListener('click', (e) => {
+          e.preventDefault();
+          alert('Data sources:\n\n• ' + meta.sources.join('\n• '));
+        });
+      } catch { /* meta.json missing: leave the line empty */ }
+    }
+
+    // ================================================================ helpers
+    const props = (geoid) => tractByGeoid[geoid]?.properties || {};
+    const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+    const has = (col) => available.has(col);
+
+    // A "measure" is something the map can colour by: a factor, a theme score or the burden score
+    function measureInfo(key) {
+      if (key === 'burden') return { key, label: 'Overall environmental burden', col: catalogue.burden_pctile_col, isScore: true, role: 'exposure' };
+      if (key.startsWith('theme:')) {
+        const t = catalogue.themes.find((x) => x.key === key.slice(6));
+        return { key, label: `${t.label} (theme score)`, col: t.score_col, isScore: true, role: 'exposure' };
+      }
+      const f = factorByKey[key];
+      return { key, label: f.label, col: f.pctile_col, raw: f.key, factor: f, role: f.role };
+    }
+
+    // Percentile (0–100) of a measure for one tract; burden uses the user's selected themes
+    function measurePctile(key, p) {
+      if (key === 'burden') return customBurdenPctile[p.geoid] ?? null;
+      const v = p[measureInfo(key).col];
+      return isNum(v) ? v : null;
+    }
+
+    function formatValue(f, v) {
+      if (!isNum(v)) return '—';
+      switch (f.unit) {
+        case '%': return v.toFixed(1) + '%';
+        case 'm': return v >= 1000 ? (v / 1000).toFixed(1) + ' km' : Math.round(v) + ' m';
+        case 'within 1 km': return Math.round(v).toLocaleString();
+        case 'percentile 0–1': return v.toFixed(2);
+        case 'index 0–100': return v.toFixed(1);
+        default: return (Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : v.toFixed(2)) + (f.unit.startsWith('index') ? '' : ' ' + f.unit);
+      }
+    }
+
+    // 75 -> "75th", 1 -> "1st", 92 -> "92nd", 13 -> "13th"
+    function ordinal(v) {
+      const n = Math.round(v), t = n % 100;
+      const suf = t >= 11 && t <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] ?? 'th';
+      return `${n}${suf}`;
+    }
+
+    function rampColor(pctile, ramp) {
+      if (!isNum(pctile)) return null;
+      return ramp[Math.min(4, Math.floor(pctile / 20))];
+    }
+    const tercile = (p) => (p < 100 / 3 ? 0 : p < 200 / 3 ? 1 : 2);
+
+    function rampLegend(ramp, lowLabel, highLabel) {
+      return `<div class="ramp">${ramp.map((c) => `<span style="background:${c}"></span>`).join('')}</div>
+              <div class="ramp-labels"><span>${lowLabel}</span><span>${highLabel}</span></div>`;
+    }
+
+    // ================================================================ custom burden (theme checkboxes)
+    let customBurdenPctile = {};
+    let customBurdenScore = {};   // geoid -> average of ticked theme scores (before ranking)
+    let customBurdenRank = {};    // geoid -> 1-based rank, 1 = least burdened
+    let burdenTractCount = 0;
+    function recomputeBurden() {
+      const cols = catalogue.themes.filter((t) => state.themes.has(t.key) && has(t.score_col)).map((t) => t.score_col);
+      const scores = tractData.features.map((f) => {
+        const vals = cols.map((c) => f.properties[c]).filter(isNum);
+        return { geoid: f.properties.geoid, s: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null };
+      });
+      const valid = scores.filter((x) => x.s !== null).sort((a, b) => a.s - b.s);
+      customBurdenPctile = {}; customBurdenScore = {}; customBurdenRank = {};
+      burdenTractCount = valid.length;
+      // average rank for ties, matching the ETL's pandas rank(pct=True)
+      let i = 0;
+      while (i < valid.length) {
+        let j = i;
+        while (j + 1 < valid.length && valid[j + 1].s === valid[i].s) j++;
+        const rank = (i + j) / 2 + 1;
+        for (let k = i; k <= j; k++) {
+          customBurdenPctile[valid[k].geoid] = Math.round((1000 * rank) / valid.length) / 10;
+          customBurdenScore[valid[k].geoid] = valid[k].s;
+          customBurdenRank[valid[k].geoid] = rank;
+        }
+        i = j + 1;
+      }
+    }
+
+    // ================================================================ burden explainer (worked example)
+    function renderBurdenExplainer() {
+      const el = document.getElementById('burden-example');
+      if (!el || !catalogue) return;
+      // Example tract: the one the user clicked, else the median-burden tract
+      let geoid = openProfileGeoid && isNum(customBurdenScore[openProfileGeoid]) ? openProfileGeoid : null;
+      if (!geoid) {
+        const sorted = Object.keys(customBurdenScore).sort((a, b) => customBurdenScore[a] - customBurdenScore[b]);
+        geoid = sorted[Math.floor(sorted.length / 2)];
+      }
+      if (!geoid) { el.innerHTML = ''; return; }
+      const p = props(geoid);
+      const ticked = catalogue.themes.filter((t) => state.themes.has(t.key) && has(t.score_col));
+
+      let html = `<div class="ex-head">Worked example: <strong>${p.tract_name}</strong>
+        ${geoid === openProfileGeoid ? '' : '<span class="muted">(median tract; click any tract to see its own)</span>'}</div>`;
+
+      // Step 1 + 2: factor percentiles averaged into theme scores
+      html += '<table class="ex"><thead><tr><th>Factor</th><th>Value</th><th>Percentile</th></tr></thead><tbody>';
+      for (const t of ticked) {
+        const fs = catalogue.factors.filter((f) => f.role === 'exposure' && f.theme === t.key && has(f.pctile_col));
+        for (const f of fs) {
+          const pct = p[f.pctile_col];
+          html += `<tr><td>${f.label}</td><td class="n">${formatValue(f, p[f.key])}</td>
+                   <td class="n">${isNum(pct) ? pct.toFixed(0) : '<span class="muted" title="Not ranked (e.g. no food outlets)">n/a</span>'}</td></tr>`;
+        }
+        const parts = fs.map((f) => p[f.pctile_col]).filter(isNum).map((v) => v.toFixed(0));
+        const s = p[t.score_col];
+        html += `<tr class="theme"><td colspan="2">= <strong>${t.label}</strong> theme score (average percentile)
+                 <span class="muted">(${parts.join(' + ')}) ÷ ${parts.length}</span></td>
+                 <td class="n"><strong>${isNum(s) ? s.toFixed(0) : '—'}</strong></td></tr>`;
+      }
+      html += '</tbody></table>';
+
+      // Step 3: average of theme scores, then rank
+      const themeVals = ticked.map((t) => p[t.score_col]).filter(isNum);
+      const avg = customBurdenScore[geoid];
+      const pct = customBurdenPctile[geoid];
+      html += `<div class="ex-step"><strong>Burden score</strong> = (${themeVals.map((v) => v.toFixed(0)).join(' + ')}) ÷ ${themeVals.length}
+               = <strong>${avg.toFixed(1)}</strong></div>
+               <div class="ex-step"><strong>Map colour</strong>: ${avg.toFixed(1)} ranks ${Math.round(customBurdenRank[geoid])} of ${burdenTractCount} tracts
+               (1 = least burdened), so its burden percentile is <strong>${pct.toFixed(0)}</strong>: more burdened than about ${Math.max(0, pct - 0.5).toFixed(0)}% of tracts.</div>`;
+      el.innerHTML = html;
+    }
+
+    // ================================================================ controls
+    function buildControls() {
+      const exposureOpts = () => {
+        let html = `<optgroup label="Scores"><option value="burden">Overall environmental burden</option>`;
+        for (const t of catalogue.themes) if (has(t.score_col)) html += `<option value="theme:${t.key}">${t.label} (theme score)</option>`;
+        html += '</optgroup>';
+        for (const t of catalogue.themes) {
+          const fs = catalogue.factors.filter((f) => f.role === 'exposure' && f.theme === t.key && has(f.pctile_col));
+          if (fs.length) html += `<optgroup label="${t.label}">${fs.map((f) => `<option value="${f.key}">${f.label}</option>`).join('')}</optgroup>`;
+        }
+        return html;
+      };
+      const roleOpts = (role) => catalogue.factors.filter((f) => f.role === role && has(f.pctile_col))
+        .map((f) => `<option value="${f.key}">${f.label}</option>`).join('');
+
+      document.getElementById('factor-select').innerHTML = exposureOpts()
+        + `<optgroup label="Who lives here">${roleOpts('population')}</optgroup>`
+        + `<optgroup label="Mental health (modelled estimates)">${roleOpts('context')}</optgroup>`;
+      document.getElementById('affected-group').innerHTML = roleOpts('population');
+
+      document.getElementById('theme-checks').innerHTML = catalogue.themes.filter((t) => has(t.score_col)).map((t) =>
+        `<label class="inline"><input type="checkbox" value="${t.key}" checked> ${t.label}</label>`).join('');
+
+      document.getElementById('cluster-legend').innerHTML = Object.entries(CLUSTER_COLORS).map(([k, c]) =>
+        `<div class="legend-item"><span class="swatch" style="background:${c}"></span>${k.replace('&', '&amp;')}</div>`).join('');
+
+      // Wiring
+      document.querySelectorAll('#modes button').forEach((b) => b.addEventListener('click', () => {
+        state.mode = b.dataset.mode;
+        document.querySelectorAll('#modes button').forEach((x) => x.classList.toggle('active', x === b));
+        document.querySelectorAll('.mode-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${state.mode}`));
+        render();
+      }));
+      const bind = (id, key) => {
+        const el = document.getElementById(id);
+        el.value = state[key];
+        el.addEventListener('change', () => { state[key] = el.value; render(); });
+      };
+      bind('factor-select', 'factor');
+      bind('affected-group', 'affectedGroup');
+      document.getElementById('affected-group').addEventListener('change', () => {
+        updateUseCaseGroupLabel();
+        if (activeUseCase && document.getElementById('uc-weight-group').checked) runUseCase(activeUseCase);
+      });
+      // Show the affected group on the map: switches the colours to factor × group (3×3 grid)
+      document.getElementById('show-group-btn').addEventListener('click', () => {
+        state.showGroup = !state.showGroup;
+        render();
+      });
+      document.querySelectorAll('#theme-checks input').forEach((cb) => cb.addEventListener('change', () => {
+        cb.checked ? state.themes.add(cb.value) : state.themes.delete(cb.value);
+        render();
+      }));
+    }
+
+    // ================================================================ render
+    function render() {
+      recomputeBurden();
+      for (const f of tractData.features) f.properties._color = colorFor(f.properties);
+      map.getSource('tracts').setData(tractData);
+      renderLegends();
+      renderAffected();
+      if (openProfileGeoid) showProfile(openProfileGeoid);
+    }
+
+    // Factor/Burden tabs: group shown as a 3×3 bivariate colouring. Clusters tab: as outlines over the cluster colours.
+    const groupOnMap = () => state.showGroup && state.mode !== 'clusters';
+    const groupOutlined = () => state.showGroup && state.mode === 'clusters';
+
+    function colorFor(p) {
+      if (groupOnMap()) {
+        const e = measurePctile(currentExposure(), p), pop = measurePctile(state.affectedGroup, p);
+        return e === null || pop === null ? null : BIVAR[tercile(pop)][tercile(e)];
+      }
+      switch (state.mode) {
+        case 'factor': {
+          const m = measureInfo(state.factor);
+          return rampColor(measurePctile(state.factor, p), m.role === 'exposure' ? EXPOSURE_RAMP : PEOPLE_RAMP);
+        }
+        case 'burden': return rampColor(measurePctile('burden', p), EXPOSURE_RAMP);
+        case 'clusters': return CLUSTER_COLORS[p.cluster_label] ?? NO_DATA;
+      }
+    }
+
+    function renderLegends() {
+      if (state.mode === 'factor') {
+        const m = measureInfo(state.factor);
+        const exposure = m.role === 'exposure';
+        document.getElementById('factor-legend').innerHTML = groupOnMap() ? groupOnMapNotice() : rampLegend(
+          exposure ? EXPOSURE_RAMP : PEOPLE_RAMP,
+          exposure ? 'Better (0th percentile)' : 'Lowest share',
+          exposure ? 'Worse (100th percentile)' : 'Highest share');
+        const f = m.factor;
+        let note = '';
+        if (f) {
+          note = `${f.description} <br><em>Source: ${f.source}</em> <span class="badge ${f.kind}">${f.kind}</span>`;
+          if (f.role === 'context') note += `<div class="warn" style="margin-top:6px;">CDC estimates these from age, sex, race and education, so they mostly mirror demographics. Don't read them as measured rates or as evidence that the factors above cause them.</div>`;
+          if (f.kind === 'proxy') note += `<div style="margin-top:4px;">This is a proxy: a stand-in for something not measured directly.</div>`;
+          if (f.key === 'pct_in_ej_block_group') note += ejExplainer(true);
+        } else if (m.key === 'burden') {
+          note = 'Average of the theme scores ticked in the Burden tab. Colours show the county percentile of that average. Open the <strong>Burden</strong> tab for a step-by-step explanation with a worked example.';
+        } else {
+          note = 'Average county percentile of this theme’s factors (100 = worst).';
+        }
+        document.getElementById('factor-note').innerHTML = note;
+      }
+      if (state.mode === 'burden') {
+        document.getElementById('burden-legend').innerHTML = groupOnMap() ? groupOnMapNotice()
+          : rampLegend(EXPOSURE_RAMP, 'Least burdened', 'Most burdened');
+        renderBurdenExplainer();
+      }
+    }
+
+    function groupOnMapNotice() {
+      return `<div class="note" style="margin-top:8px;padding:6px 8px;background:#faf5ff;border-radius:6px;">
+        The map is showing <strong>${measureInfo(currentExposure()).label.toLowerCase()}</strong> together with
+        <strong>${factorByKey[state.affectedGroup].label.toLowerCase()}</strong>. See the colour grid under <em>Who's affected</em>.</div>`;
+    }
+
+    function renderBivarLegend() {
+      const counts = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (const f of tractData.features) {
+        const e = measurePctile(currentExposure(), f.properties), pop = measurePctile(state.affectedGroup, f.properties);
+        if (e !== null && pop !== null) counts[tercile(pop)][tercile(e)]++;
+      }
+      let html = `<div class="ylab">${factorByKey[state.affectedGroup].label} →</div>`;
+      for (let row = 2; row >= 0; row--)
+        for (let col = 0; col < 3; col++)
+          html += `<div class="cell" style="background:${BIVAR[row][col]};color:${row + col >= 3 ? '#fff' : '#0f172a'}">${counts[row][col]}</div>`;
+      html += `<div></div><div class="xlab">${measureInfo(currentExposure()).label} (worse) →</div>`;
+      document.getElementById('bivar').innerHTML = html;
+      document.getElementById('bivar-note').innerHTML =
+        `Each tract is coloured by two things at once, split into thirds: ${measureInfo(currentExposure()).label.toLowerCase()} (left → right, worse)
+         and ${factorByKey[state.affectedGroup].label.toLowerCase()} (bottom → top). <strong>Darkest</strong> = worst third for conditions
+         <strong>and</strong> highest third for the group. Numbers are tract counts.`;
+    }
+
+    // ================================================================ who's affected
+    function currentExposure() {
+      if (state.mode === 'factor' && measureInfo(state.factor).role === 'exposure') return state.factor;
+      return 'burden';
+    }
+
+    // Plain-language names for each population group: [noun, "of residents/households"]
+    // Explanation of Massachusetts Environmental Justice (EJ) populations, shown wherever the EJ measure is used
+    function ejExplainer(open) {
+      return `<details class="ej-help" ${open ? 'open' : ''}>
+        <summary>What is a state EJ area?</summary>
+        <p>Massachusetts officially designates some <strong>census block groups</strong> (neighbourhoods of a few hundred to a few
+        thousand people) as <strong>Environmental Justice populations</strong>, under the 2021 climate "Roadmap" law, using 2020 Census data.
+        State agencies give these areas extra review and outreach, for example when a polluting facility is proposed nearby.</p>
+        <p>A block group qualifies if it meets <strong>any one</strong> of:</p>
+        <ul>
+          <li><strong>Income:</strong> median household income is 65% or less of the state median</li>
+          <li><strong>Minority:</strong> people of color are 40% or more of residents, or 25% or more if the town's median household income is no more than 150% of the state median</li>
+          <li><strong>English isolation:</strong> 25% or more of households have limited English</li>
+        </ul>
+        <p><strong>On this map</strong> the measure is the <em>share of a tract's residents who live in designated block groups</em>.
+        Click a tract to see which of its block groups qualify, and why.</p>
+        <p><strong>In Middlesex</strong>, about half of residents (≈ 817,000 in 586 block groups) live in EJ areas. About 82% of them qualify on the
+        minority criterion alone, so this measure overlaps heavily with "% people of color" and isn't an independent signal.</p>
+        <p class="muted">Source: MassGIS 2020 Environmental Justice Populations.</p>
+      </details>`;
+    }
+
+    const GROUP_PHRASES = {
+      pct_people_of_color: ['people of color', 'of residents'],
+      pct_foreign_born: ['foreign-born residents', 'of residents'],
+      pct_limited_english: ['limited-English households', 'of households'],
+      pct_below_poverty: ['residents below the poverty line', 'of residents'],
+      pct_in_ej_block_group: ['residents in state EJ areas', 'of residents'],
+      svi_overall: ['social vulnerability', 'on the SVI'],
+    };
+    const HIGH_COLOR = '#7c3aed', LOW_COLOR = '#0d9488', MID_COLOR = '#cbd5e1';
+
+    function renderAffected() {
+      const expKey = currentExposure();
+      const m = measureInfo(expKey);
+      const groupKey = state.affectedGroup;
+      const g = factorByKey[groupKey];
+      document.getElementById('affected-group').value = groupKey;
+      const btn = document.getElementById('show-group-btn');
+      const groupLabel = g.label.toLowerCase();
+      btn.classList.toggle('on', state.showGroup);
+      btn.textContent = state.showGroup ? `✓ Showing ${groupLabel} on the map · click to hide` : `Show ${groupLabel} on the map`;
+      document.getElementById('affected-bivar-wrap').style.display = groupOnMap() ? 'flex' : 'none';
+      if (groupOnMap()) renderBivarLegend();
+      const ejHelp = document.getElementById('affected-ej-help');
+      const wasOpen = ejHelp.querySelector('details')?.open ?? false;
+      ejHelp.innerHTML = groupKey === 'pct_in_ej_block_group' ? ejExplainer(wasOpen) : '';
+
+      const value = (p) => (m.raw ? p[m.raw] : measurePctile(expKey, p));
+      const rows = tractData.features.map((f) => f.properties)
+        .filter((p) => isNum(p[groupKey]) && isNum(value(p)))
+        .sort((a, b) => a[groupKey] - b[groupKey]);
+      if (rows.length < 8) { document.getElementById('affected-body').innerHTML = '<p class="note">Not enough data.</p>'; return; }
+      const q = Math.floor(rows.length / 4);
+      const low = rows.slice(0, q), high = rows.slice(-q);
+      const mean = (arr) => arr.map(value).reduce((a, b) => a + b, 0) / arr.length;
+      const fmt = (v) => (m.factor ? formatValue(m.factor, v) : `avg. ${ordinal(v)} percentile`);
+      const hi = mean(high), lo = mean(low);
+      const higherIsWorse = !(m.factor && !m.factor.higher_is_worse);
+      const worseForHigh = higherIsWorse ? hi > lo : hi < lo;
+      const [noun, ofWhat] = GROUP_PHRASES[groupKey] ?? [g.label.toLowerCase(), ''];
+      const isShare = g.unit === '%';
+      const cutHigh = formatValue(g, high[0][groupKey]), cutLow = formatValue(g, low[low.length - 1][groupKey]);
+      const lowCutIsZero = low[low.length - 1][groupKey] === 0;
+      const most = isShare ? 'most' : 'highest', fewest = isShare ? 'fewest' : 'lowest';
+
+      const ids = { high: new Set(high.map((p) => p.geoid)), low: new Set(low.map((p) => p.geoid)) };
+      updateGroupOutlines(high, low, q);
+      const rho = spearman(rows.map((p) => p[groupKey]), rows.map(value));
+
+      document.getElementById('affected-body').innerHTML = `
+        <div class="cmp-title">${m.label}${m.factor ? '' : ' (percentile within Middlesex; higher = worse)'}</div>
+        <div class="row"><span><span class="dot" style="background:${HIGH_COLOR}"></span>In the <strong>${q}</strong> tracts with the <strong>${most}</strong> ${noun}
+          <span class="muted">(${cutHigh} or more ${ofWhat})</span></span><span class="val">${fmt(hi)}</span></div>
+        <div class="row"><span><span class="dot" style="background:${LOW_COLOR}"></span>In the <strong>${q}</strong> tracts with the <strong>${fewest}</strong> ${noun}
+          <span class="muted">(${lowCutIsZero ? 'none' : `${cutLow} or less ${ofWhat}`})</span></span><span class="val">${fmt(lo)}</span></div>
+        <p class="note">${Math.abs(hi - lo) < 1e-9 ? 'No difference.' :
+          `On average, conditions are <strong>${worseForHigh ? 'worse' : 'better'}</strong> where there are the ${most} ${noun}.`}
+          Averages across tracts, not weighted by population.</p>
+        ${scatterSvg(rows, groupKey, g, value, m, ids)}
+        <p class="note">${correlationSentence(rho, noun, isShare, m, higherIsWorse)}</p>`;
+
+      document.querySelectorAll('#affected-body circle[data-geoid]').forEach((c) =>
+        c.addEventListener('click', () => selectTract(c.dataset.geoid, true)));
+    }
+
+    function updateGroupOutlines(high, low, q) {
+      const note = document.getElementById('group-outline-note');
+      const src = map.getSource('groups');
+      if (!groupOutlined()) { src?.setData(emptyFC()); note.style.display = 'none'; return; }
+      const feat = (p, grp) => ({ type: 'Feature', geometry: tractByGeoid[p.geoid].geometry, properties: { geoid: p.geoid, _grp: grp } });
+      src?.setData({ type: 'FeatureCollection', features: [...high.map((p) => feat(p, 'high')), ...low.map((p) => feat(p, 'low'))] });
+      const [noun] = GROUP_PHRASES[state.affectedGroup] ?? [factorByKey[state.affectedGroup].label.toLowerCase()];
+      note.innerHTML = `Cluster colours can't be blended with a group, so the group is drawn as <strong>outlines</strong>:
+        <span class="dot" style="background:${HIGH_COLOR}"></span>purple = the ${q} tracts with the most ${noun};
+        <span class="dot" style="background:${LOW_COLOR}"></span>teal = the ${q} with the fewest.`;
+      note.style.display = 'block';
+    }
+
+    // Spearman rank correlation (Pearson correlation of average ranks)
+    function spearman(xs, ys) {
+      const rank = (arr) => {
+        const idx = arr.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]);
+        const r = new Array(arr.length);
+        for (let i = 0; i < idx.length;) {
+          let j = i;
+          while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++;
+          for (let k = i; k <= j; k++) r[idx[k][1]] = (i + j) / 2 + 1;
+          i = j + 1;
+        }
+        return r;
+      };
+      const rx = rank(xs), ry = rank(ys), n = xs.length;
+      const mx = rx.reduce((a, b) => a + b, 0) / n, my = ry.reduce((a, b) => a + b, 0) / n;
+      let sxy = 0, sxx = 0, syy = 0;
+      for (let i = 0; i < n; i++) { const dx = rx[i] - mx, dy = ry[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+      return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+    }
+
+    function correlationSentence(rho, noun, isShare, m, higherIsWorse) {
+      const a = Math.abs(rho);
+      const strength = a < 0.1 ? 'no clear' : a < 0.3 ? 'a weak' : a < 0.5 ? 'a moderate' : 'a strong';
+      const label = m.label.toLowerCase();
+      if (a < 0.1) return `<strong>Correlation ρ = ${rho.toFixed(2)}</strong>: no clear relationship between ${noun} and ${label}.`;
+      const more = rho > 0 ? 'more' : 'less';
+      const worse = (rho > 0) === higherIsWorse ? 'worse' : 'better';
+      return `<strong>Correlation ρ = ${rho.toFixed(2)}</strong> (${strength} relationship): tracts with ${isShare ? 'more' : 'higher'} ${noun}
+        tend to have ${more} ${label}, i.e. <strong>${worse}</strong> conditions. Each dot is a tract; the line shows the average for each fifth of tracts.
+        A correlation describes a pattern across places, not that one causes the other.`;
+    }
+
+    function niceTicks(min, max, count = 4) {
+      const span = max - min || 1, step0 = span / count;
+      const mag = 10 ** Math.floor(Math.log10(step0));
+      const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= step0);
+      const ticks = [];
+      for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) ticks.push(+v.toFixed(10));
+      return ticks;
+    }
+
+    function shortNum(v) {
+      const a = Math.abs(v);
+      if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+      if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+      return Number.isInteger(v) ? String(v) : v.toFixed(a < 1 ? 2 : 1);
+    }
+
+    function scatterSvg(rows, groupKey, g, value, m, ids) {
+      const W = 330, H = 230, L = 44, R = 8, T = 10, B = 36;
+      const xs = rows.map((p) => p[groupKey]), ys = rows.map(value);
+      const xMax = g.unit === '%' ? Math.max(...xs) : 1;
+      const yMin = Math.min(0, ...ys), yMax = Math.max(...ys);
+      // Very skewed values (e.g. traffic) use a log scale so the dots don't all sit on the floor
+      const sorted = [...ys].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)];
+      const useLog = yMin >= 0 && median > 0 && yMax / median > 15;
+      const ty = (v) => (useLog ? Math.log10(v + 1) : v);
+      const y0 = ty(yMin), y1 = ty(yMax) || 1;
+      const sx = (v) => L + (v / (xMax || 1)) * (W - L - R);
+      const sy = (v) => T + (1 - (ty(v) - y0) / (y1 - y0 || 1)) * (H - T - B);
+
+      let svg = `<svg class="scatter" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Scatter plot of ${m.label} against ${g.label}">`;
+      // Gridlines + ticks
+      const yTicks = useLog
+        ? [0, 1, 2, 3, 4, 5, 6, 7].map((k) => (k === 0 ? 0 : 10 ** k)).filter((v) => v <= yMax * 1.01)
+        : niceTicks(yMin, yMax);
+      for (const v of yTicks) {
+        svg += `<line x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}" class="grid"/><text x="${L - 4}" y="${sy(v) + 3}" text-anchor="end">${shortNum(v)}</text>`;
+      }
+      const xTicks = niceTicks(0, xMax);
+      for (const v of xTicks) {
+        svg += `<text x="${sx(v)}" y="${H - B + 13}" text-anchor="middle">${g.unit === '%' ? v + '%' : v}</text>`;
+      }
+      svg += `<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="axis"/>`;
+      // Dots: middle tracts first, then the two highlighted quarters on top
+      const order = [...rows].sort((a, b) => (ids.high.has(a.geoid) || ids.low.has(a.geoid)) - (ids.high.has(b.geoid) || ids.low.has(b.geoid)));
+      for (const p of order) {
+        const c = ids.high.has(p.geoid) ? HIGH_COLOR : ids.low.has(p.geoid) ? LOW_COLOR : MID_COLOR;
+        const sel = p.geoid === openProfileGeoid;
+        svg += `<circle data-geoid="${p.geoid}" cx="${sx(p[groupKey]).toFixed(1)}" cy="${sy(value(p)).toFixed(1)}" r="${sel ? 5 : 3}"
+                 fill="${c}" fill-opacity="${sel ? 1 : 0.75}" ${sel ? 'stroke="#0f172a" stroke-width="2"' : ''}>
+                 <title>${p.tract_name}\n${g.label}: ${formatValue(g, p[groupKey])}\n${m.label}: ${m.factor ? formatValue(m.factor, value(p)) : ordinal(value(p)) + ' percentile'}\n(click to open)</title></circle>`;
+      }
+      // Average of each fifth of tracts (sorted by group share)
+      const pts = [];
+      for (let k = 0; k < 5; k++) {
+        const bin = rows.slice(Math.floor((k * rows.length) / 5), Math.floor(((k + 1) * rows.length) / 5));
+        const mx = bin.reduce((a, p) => a + p[groupKey], 0) / bin.length, my = bin.reduce((a, p) => a + value(p), 0) / bin.length;
+        pts.push([sx(mx), sy(my)]);
+      }
+      svg += `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" class="trend"/>`;
+      svg += pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3.5" class="trend-pt"/>`).join('');
+      // Axis titles
+      svg += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" class="atitle">${g.label} →</text>`;
+      svg += `<text transform="translate(11 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" class="atitle">${m.factor ? m.label + (m.factor.unit.startsWith('index') || m.factor.unit.startsWith('within') ? '' : ` (${m.factor.unit})`) : 'Burden (percentile)'}${useLog ? ', log scale' : ''}</text>`;
+      return svg + '</svg>';
+    }
+
+    // ================================================================ hover + profile
+    function hoverHtml(geoid) {
+      const p = props(geoid);
+      let line = '';
+      if (state.mode === 'clusters') line = p.cluster_label ?? '—';
+      else {
+        const base = state.mode === 'burden' ? 'burden' : state.factor;
+        const keys = groupOnMap() ? [currentExposure(), state.affectedGroup] : [base];
+        line = keys.map((k) => {
+          const m = measureInfo(k);
+          const pct = measurePctile(k, p);
+          const raw = m.raw ? formatValue(m.factor, p[m.raw]) : null;
+          return `${m.label}: <strong>${raw ?? (pct === null ? '—' : ordinal(pct) + ' percentile')}</strong>` +
+                 (pct !== null && m.raw ? ` <span style="color:#64748b">(${ordinal(pct)} percentile)</span>` : '');
+        }).join('<br>');
+      }
+      return `<strong>${p.tract_name}</strong><br>${line}<div style="color:#64748b;font-size:11px;margin-top:3px;">Click for full profile</div>`;
+    }
+
+    let openProfileGeoid = null;
+    function selectTract(geoid, zoom) {
+      const f = tractByGeoid[geoid];
+      if (!f) return;
+      map.getSource('selected').setData({ type: 'FeatureCollection', features: [f] });
+      if (zoom) map.fitBounds(featureBounds([f]), { padding: { top: 80, bottom: 80, left: 80, right: 360 }, maxZoom: 14, duration: 600 });
+      showProfile(geoid);
+    }
+
+    function showProfile(geoid) {
+      openProfileGeoid = geoid;
+      const p = props(geoid);
+      const burden = customBurdenPctile[geoid];
+      document.getElementById('profile-title').textContent = p.tract_name;
+      document.getElementById('profile-sub').innerHTML =
+        `GEOID ${geoid} · Overall burden: <strong>${isNum(burden) ? ordinal(burden) + ' percentile' : '—'}</strong>` +
+        (isNum(burden) ? ` <span class="muted">(worse than about ${Math.round(burden)}% of Middlesex tracts)</span>` : '') +
+        (p.cluster_label ? ` · ${p.cluster_label.replace('&', '&amp;')}` : '');
+
+      const fRow = (f) => {
+        const pct = p[f.pctile_col];
+        const pctText = !isNum(pct) ? '' : f.role === 'exposure'
+          ? `worse than ${Math.max(0, pct - 0.5).toFixed(0)}% of tracts` : `${pct.toFixed(0)}th percentile`;
+        return `<div class="frow"><span>${f.label}<span class="badge ${f.kind}">${f.kind}</span></span>
+                <span class="v">${formatValue(f, p[f.key])}</span><span class="p">${pctText}</span></div>`;
+      };
+      let html = '<h4>Environmental conditions</h4>';
+      for (const t of catalogue.themes) {
+        const s = p[t.score_col];
+        const fs = catalogue.factors.filter((f) => f.role === 'exposure' && f.theme === t.key && has(f.key));
+        if (!fs.length) continue;
+        html += `<div class="theme-row"><span>${t.label}</span><span title="Average percentile of this theme's factors">${isNum(s) ? 'avg. ' + ordinal(s) + ' percentile' : '—'}</span></div>
+                 <div class="bar"><span style="width:${isNum(s) ? s : 0}%;background:${rampColor(s, EXPOSURE_RAMP) ?? NO_DATA}"></span></div>
+                 ${fs.map(fRow).join('')}`;
+      }
+      html += '<h4>Who lives here</h4>' + catalogue.factors.filter((f) => f.role === 'population' && has(f.key)).map(fRow).join('');
+      if (p.ej_criteria) {
+        html += `<div class="ej-row"><strong>State EJ designation:</strong> ${p.ej_criteria}
+                 <span class="muted">(Income = low household income; Minority = people of color share;
+                 English isolation = limited-English households)</span></div>`;
+      }
+      html += '<h4>Mental health (modelled estimates)</h4>' + catalogue.factors.filter((f) => f.role === 'context' && has(f.key)).map(fRow).join('');
+      html += '<p class="note">Percentiles compare this tract with the other Middlesex tracts (100th = worst). Each theme shows the average percentile of its factors; longer, redder bars = worse.</p>';
+      document.getElementById('profile-body').innerHTML = html;
+      document.getElementById('profile').style.display = 'block';
+      renderBurdenExplainer();  // worked example follows the selected tract
+      renderAffected();         // ring the selected tract's dot in the scatter plot
+    }
+
+    function closeProfile() {
+      openProfileGeoid = null;
+      document.getElementById('profile').style.display = 'none';
+      map.getSource('selected').setData(emptyFC());
+    }
+
+    // ================================================================ priority tracts (use cases)
+    // Each use case ranks tracts by the average of its factors' county percentiles (100 = worst conditions).
+    // Optionally the "Who's affected" group's percentile is averaged in 50/50, to favour tracts where more of that group lives.
+    const USE_CASES = [
+      { id: 'trees', icon: '🌳', title: 'Tree planting & cooling',
+        blurb: 'Least tree canopy', factors: ['tree_canopy_pct'] },
+      { id: 'parks', icon: '🏞️', title: 'New park or open space',
+        blurb: 'Farthest from, and least, public open space', factors: ['dist_to_park_m', 'park_area_pct'] },
+      { id: 'traffic', icon: '🚦', title: 'Traffic noise & air mitigation',
+        blurb: 'Most traffic, rail, NO₂ and diesel exhaust', factors: ['traffic_vkt_per_sqkm', 'traffic_proximity', 'rail_corridor_pct', 'no2', 'diesel_pm'] },
+      { id: 'food', icon: '🥦', title: 'Healthy food access',
+        blurb: 'Weakest healthy-food mix, most fast food & convenience stores', factors: ['mrfei_score', 'less_healthy_per_sqkm'] },
+      { id: 'alcohol', icon: '🍺', title: 'Alcohol licensing review',
+        blurb: 'Most liquor stores, bars and pubs nearby', factors: ['alcohol_outlets_1km'] },
+      { id: 'health', icon: '🏥', title: 'Health or mental-health service siting',
+        blurb: 'Farthest from a health centre or hospital, fewest transit stops', factors: ['dist_to_health_facility_m', 'transit_stops_1km'] },
+      { id: 'community', icon: '📚', title: 'Community & social connection',
+        blurb: 'Fewest libraries and places of worship, fewest transit stops', factors: ['community_places_1km', 'transit_stops_1km'] },
+      { id: 'burden', icon: '📊', title: 'Overall burden hot spots',
+        blurb: 'Highest overall environmental burden (Burden tab themes)', factors: ['burden'] },
+    ];
+    let activeUseCase = null;
+
+    function buildUseCases() {
+      const usable = USE_CASES.filter((u) => u.factors.every((k) => k === 'burden' || has(factorByKey[k]?.pctile_col)));
+      document.getElementById('use-cases').innerHTML = usable.map((u) => `
+        <button class="use-case" data-id="${u.id}" type="button">
+          <span class="ic">${u.icon}</span><span class="t">${u.title}</span><span class="d">${u.blurb}</span>
+        </button>`).join('');
+      document.querySelectorAll('button.use-case').forEach((b) => b.addEventListener('click', () => runUseCase(b.dataset.id)));
+      for (const id of ['uc-k', 'uc-weight-group']) {
+        document.getElementById(id).addEventListener('change', () => activeUseCase && runUseCase(activeUseCase));
+      }
+      updateUseCaseGroupLabel();
+    }
+
+    function updateUseCaseGroupLabel() {
+      const g = factorByKey[state.affectedGroup];
+      const [noun] = GROUP_PHRASES[state.affectedGroup] ?? [g.label.toLowerCase()];
+      document.getElementById('uc-weight-label').textContent = `and prioritise tracts with more ${noun}`;
+    }
+
+    function runUseCase(id) {
+      const u = USE_CASES.find((x) => x.id === id);
+      activeUseCase = id;
+      document.querySelectorAll('button.use-case').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
+      const k = Number(document.getElementById('uc-k').value);
+      const weightGroup = document.getElementById('uc-weight-group').checked;
+      const groupKey = state.affectedGroup, g = factorByKey[groupKey];
+
+      const ranked = tractData.features.map((f) => {
+        const p = f.properties;
+        const parts = u.factors.map((key) => measurePctile(key, p)).filter(isNum);
+        if (!parts.length || !(p.total_population > 0)) return null;
+        const conditions = parts.reduce((a, b) => a + b, 0) / parts.length;
+        const groupPct = p[g.pctile_col];
+        if (weightGroup && !isNum(groupPct)) return null;
+        return { f, conditions, score: weightGroup ? (conditions + groupPct) / 2 : conditions };
+      }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, k);
+
+      // Result rows: rank score, the use case's factors (raw values), and the group share
+      const cols = u.factors.map((key) => (key === 'burden' ? 'burden_pctile' : key));
+      const features = ranked.map(({ f, conditions, score }) => {
+        const props = { geoid: f.properties.geoid, tract_name: f.properties.tract_name, priority_score: Math.round(score * 10) / 10 };
+        if (weightGroup) props.conditions_score = Math.round(conditions * 10) / 10;
+        for (const c of cols) props[c] = f.properties[c];
+        props[groupKey] = f.properties[groupKey];
+        return { type: 'Feature', geometry: f.geometry, properties: props };
+      });
+
+      map.getSource('highlighted').setData({ type: 'FeatureCollection', features });
+      renderResultsTable(features);
+      map.setPaintProperty('tracts-fill', 'fill-opacity', 0.25);  // fade the rest so the picks stand out
+      if (features.length) map.fitBounds(featureBounds(features), { padding: 60, maxZoom: 13, duration: 800 });
+
+      const factorNames = u.factors.map((key) => measureInfo(key).label.toLowerCase());
+      const [noun] = GROUP_PHRASES[groupKey] ?? [g.label.toLowerCase()];
+      document.getElementById('uc-status').innerHTML = `
+        <strong>${u.icon} Top ${features.length} tracts for ${u.title.toLowerCase()}</strong> (yellow on the map, listed below).<br>
+        <span class="muted">Ranked by ${factorNames.length > 1 ? 'the average county percentile of ' : 'the county percentile of '}
+        ${factorNames.join(', ')} (100th percentile = worst)${weightGroup ? `, averaged 50/50 with the share of ${noun} (the group chosen under <em>Who's affected</em> above)` : ''}.
+        Tracts with no residents are left out.</span>`;
+      document.getElementById('uc-clear').style.display = 'block';
+    }
+
+    function featureBounds(features) {
+      const b = [[Infinity, Infinity], [-Infinity, -Infinity]];
+      const visit = (c) => {
+        if (typeof c[0] === 'number') {
+          b[0][0] = Math.min(b[0][0], c[0]); b[0][1] = Math.min(b[0][1], c[1]);
+          b[1][0] = Math.max(b[1][0], c[0]); b[1][1] = Math.max(b[1][1], c[1]);
+        } else c.forEach(visit);
+      };
+      features.forEach((f) => visit(f.geometry.coordinates));
+      return b;
+    }
+
+    function resetHighlight() {
+      map.getSource('highlighted').setData(emptyFC());
+      map.setPaintProperty('tracts-fill', 'fill-opacity', 0.75);
+      document.getElementById('uc-status').innerHTML = '';
+      document.getElementById('uc-clear').style.display = 'none';
+      document.querySelectorAll('button.use-case').forEach((b) => b.classList.remove('active'));
+      activeUseCase = null;
+      resultCount = 0;
+      closeProfile();
+      hideResults();
+    }
+
+    // ================================================================ results table
+    const EXTRA_LABELS = {
+      geoid: 'GEOID', tract_name: 'Tract', area_sqkm: 'Area (km²)', lila_1and10_flag: 'Food desert',
+      low_income_flag: 'Low income', poverty_rate: 'Poverty % (USDA)', median_family_income: 'Median family income',
+      healthy_outlet: 'Healthy outlets', less_healthy_outlet: 'Less-healthy outlets', healthy_per_sqkm: 'Healthy / km²',
+      est_veg_meat_share_pct: 'Est. veg share %', cluster_id: 'Cluster ID', cluster_label: 'Cluster',
+      lisa_cluster: 'LISA', lisa_pvalue: 'LISA p-value', burden_score: 'Burden score', burden_pctile: 'Burden percentile',
+      priority_score: 'Priority (avg. percentile)', conditions_score: 'Conditions (avg. percentile)',
+    };
+    function label(col) {
+      if (EXTRA_LABELS[col]) return EXTRA_LABELS[col];
+      if (factorByKey[col]) return factorByKey[col].label;
+      const pf = catalogue?.factors.find((f) => f.pctile_col === col);
+      if (pf) return `${pf.label} (percentile)`;
+      const th = catalogue?.themes.find((t) => t.score_col === col);
+      if (th) return `${th.label} score`;
+      return col.replace(/_/g, ' ');
+    }
+    const INTEGER_COLUMNS = new Set(['healthy_outlet', 'less_healthy_outlet', 'cluster_id']);
+
+    function formatCell(col, v) {
+      if (v === null || v === undefined || v === '') return '—';
+      if (typeof v !== 'number') return String(v);
+      if (factorByKey[col]) return formatValue(factorByKey[col], v);
+      if (col.endsWith('_flag')) return v === 1 ? 'Yes' : 'No';
+      if (col.includes('income')) return '$' + Math.round(v).toLocaleString();
+      if (col.endsWith('pvalue')) return v.toFixed(3);
+      if (col.endsWith('_pctile')) return ordinal(v);
+      if (INTEGER_COLUMNS.has(col)) return Math.round(v).toLocaleString();  // JSON turns 26.0 into 26
+      return v.toFixed(1);
+    }
+
+    let resultCount = 0;
+    function renderResultsTable(features) {
+      const panel = document.getElementById('results');
+      const thead = panel.querySelector('thead'), tbody = panel.querySelector('tbody');
+      thead.innerHTML = ''; tbody.innerHTML = '';
+      resultCount = features.length;
+      if (!features.length) { hideResults(); return; }
+
+      const cols = Object.keys(features[0].properties);
+      const numeric = Object.fromEntries(cols.map((c) =>
+        [c, features.some((f) => typeof f.properties[c] === 'number') && !c.endsWith('_flag')]));
+      const hr = document.createElement('tr');
+      for (const c of ['#', ...cols]) {
+        const th = document.createElement('th');
+        th.textContent = c === '#' ? '#' : label(c);
+        if (c === '#' || numeric[c]) th.className = 'num';
+        hr.appendChild(th);
+      }
+      thead.appendChild(hr);
+      features.forEach((f, i) => {
+        const tr = document.createElement('tr');
+        for (const [c, v] of [['#', i + 1], ...cols.map((c) => [c, f.properties[c]])]) {
+          const td = document.createElement('td');
+          td.textContent = c === '#' ? v : formatCell(c, v);
+          if (c === '#' || numeric[c]) td.className = 'num';
+          tr.appendChild(td);
+        }
+        tr.addEventListener('click', () => {
+          document.querySelectorAll('#results tbody tr.active').forEach((r) => r.classList.remove('active'));
+          tr.classList.add('active');
+          selectTract(f.properties.geoid, true);
+        });
+        tbody.appendChild(tr);
+      });
+      document.getElementById('results-title').innerHTML =
+        `<strong>${features.length} result${features.length === 1 ? '' : 's'}</strong> · click a row to zoom to the tract and open its profile`;
+      showResults();
+    }
+
+    function showResults() {
+      document.getElementById('results').style.display = 'flex';
+      document.getElementById('show-results').style.display = 'none';
+      map.resize();
+    }
+
+    function hideResults() {
+      document.getElementById('results').style.display = 'none';
+      const btn = document.getElementById('show-results');
+      btn.textContent = `Show results table (${resultCount})`;
+      btn.style.display = resultCount > 0 ? 'block' : 'none';
+      map.resize();
+    }
+  </script>
+</body>
+</html>

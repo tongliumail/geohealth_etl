@@ -1,12 +1,12 @@
 # GeoHealth ETL
 
-An **environmental burden and equity explorer** for the 357 census tracts of Middlesex County, Massachusetts. It maps conditions linked to mental health in research (food environment, green space, traffic and noise, air quality, access to services) and shows **who lives with them**: people of color, immigrants, limited-English households and people in poverty. An AI assistant turns plain-English questions into PostGIS queries.
+An **environmental burden and equity explorer** for the 357 census tracts of Middlesex County, Massachusetts. It maps conditions linked to mental health in research (food environment, green space, traffic and noise, air quality, access to services) and shows **who lives with them**: people of color, immigrants, limited-English households and people in poverty. A **Find priority tracts** panel lists the top tracts for common planning uses, such as tree planting, new parks or traffic mitigation.
 
 The tool has three parts:
 
 1. **ETL pipeline:** pulls about a dozen public datasets, puts them all on 2020 census tracts, ranks every factor within the county, combines them into theme scores and an overall burden score, and loads one spatial table into PostGIS.
 2. **Spatial modeling:** spatial autocorrelation (Moran's I / LISA hot spots) and K-means clustering of tracts into four food/mental-health profiles.
-3. **Web explorer:** a FastAPI + MapLibre map with three views (one factor, burden score, clusters), a button to show any population group on the map alongside the current factor, a "who's affected" comparison, a profile for each tract, and an LLM agent (OpenAI `gpt-4o-mini` via LangChain) that answers questions such as *"Tracts in the worst 20% for tree canopy where most residents are people of color"*.
+3. **Web explorer:** a FastAPI + MapLibre map with three views (one factor, burden score, clusters), a button to show any population group on the map alongside the current factor, a "who's affected" comparison, a profile for each tract, and a **Find priority tracts** panel with top-10/25/50 lists for typical use cases. An optional LLM agent endpoint (`POST /api/query`, OpenAI `gpt-4o-mini` via LangChain) is still available to API users, but isn't on the page.
 
 > **What this tool does and doesn't show.** It measures *where conditions are worse and who lives there*. It does **not** show that these conditions cause mental illness in Middlesex County. The mental-health layers come from CDC PLACES, which CDC estimates mostly from tract demographics (age, sex, race, education), not from local measurements. So they can't be used to test environmental factors. See [Known limitations](#known-limitations).
 
@@ -39,7 +39,7 @@ Settings are read from a `.env` file in the project root. It's listed in `.gitig
 | Variable | Required for | Notes |
 |---|---|---|
 | `CENSUS_API_KEY` | `etl` | Free; request one at <https://api.census.gov/data/key_signup.html> and click the activation link in the email. |
-| `OPENAI_API_KEY` | AI queries in `serve` | The map works without it; only **Run AI Query** needs it. |
+| `OPENAI_API_KEY` | optional | Only for the `POST /api/query` AI endpoint. The map page doesn't use it. |
 | `DATABASE_URL` | optional | Defaults to `postgresql+psycopg2://geo_user:geo_password@localhost:5432/geohealth` (matches `docker-compose.yml`). Keep the `+psycopg2` driver prefix. |
 
 ```dotenv
@@ -55,6 +55,7 @@ The study area (Middlesex County, MA) and coordinate systems are set in [src/geo
 |---|---|---|
 | `uv run geohealth etl` | Downloads all sources, builds `tract_food_mental_health` including factor scores and cluster columns, writes it to PostGIS | First run: about 10–20 minutes (OpenStreetMap queries and a 153 MB EJScreen download). Later runs reuse `data_cache/` and `cache/`. |
 | `uv run geohealth cluster` | Re-runs only the clustering on the existing table, without downloading again (e.g. after changing [cluster.py](src/geohealth_etl/modeling/cluster.py)) | Under a minute |
+| `uv run geohealth export` | Writes a static copy of the map to `site/` (page + data files) that any static web host can serve. Options: `--out DIR`, `--simplify METRES` (default 10; 0 = full detail), `--single-file` (one self-contained HTML file instead; see below) | A few seconds |
 | `uv run geohealth serve` | Starts the web explorer at <http://localhost:8000> (auto-reloads on code changes) | Runs until stopped |
 
 ## Data sources
@@ -126,9 +127,28 @@ Tracts missing any input get `Insufficient Data` and appear gray on the map. Exc
 - **Correlation chart:** a scatter plot under the comparison, with one dot per tract (group share across, factor value up). The two compared quarters are coloured purple and teal, and a line shows the average for each fifth of tracts. Very skewed factors such as traffic switch to a log scale automatically. A sentence gives the Spearman rank correlation (ρ) in plain words, labelled weak (0.1–0.3), moderate (0.3–0.5) or strong (0.5 and above). Clicking a dot opens that tract.
 - **Tract profile:** clicking any tract, or any row in the results table, opens a profile with each theme score, every factor's value and percentile (tagged *measured*, *proxy* or *modelled*), who lives there, and the modelled mental-health estimates.
 
-### AI query agent ([agent/spatial_agent.py](src/geohealth_etl/agent/spatial_agent.py))
+### Find priority tracts ([api/static/index.html](src/geohealth_etl/api/static/index.html))
 
-The question and the table schema go to `gpt-4o-mini`, which returns an explanation and a SQL query. The query is checked to be read-only (`SELECT`/`WITH` only, with no write keywords) before it runs. Matching tracts are returned as GeoJSON, filled yellow on the map, and the map zooms to them. The generated SQL is shown in the sidebar, and the returned rows appear in a **results table** under the map; click a row to zoom to that tract. Clickable **example questions** under the query box show the kinds of questions the agent can answer.
+A sidebar panel with preset **use cases**. Choose one, pick **top 10, 25 or 50**, and the matching tracts are filled yellow on the map, the map zooms to them, and they're listed in the **results table** under the map. Click a row to zoom to that tract and open its profile. Everything is calculated in the browser from the tract data, with no AI and no extra server calls.
+
+| Use case | Ranked by the average county percentile of (100 = worst) |
+|---|---|
+| 🌳 Tree planting & cooling | tree canopy |
+| 🏞️ New park or open space | distance to public open space, public open space % |
+| 🚦 Traffic noise & air mitigation | traffic volume density, traffic proximity, near an active railway, NO₂, diesel PM |
+| 🥦 Healthy food access | healthy food retail mix (mRFEI), fast food & convenience density |
+| 🍺 Alcohol licensing review | alcohol outlets nearby |
+| 🏥 Health or mental-health service siting | distance to health centre or hospital, transit stops nearby |
+| 📚 Community & social connection | libraries & places of worship nearby, transit stops nearby |
+| 📊 Overall burden hot spots | overall burden (themes ticked in the Burden tab) |
+
+With **"and prioritise tracts with more [group]"** ticked (the default), the conditions score is averaged 50/50 with the county percentile of the group chosen under *Who's affected*. That puts high-need, high-burden tracts first. Untick it to rank on conditions alone. Tracts with no residents are left out. The table shows the priority score, the conditions-only score, the raw values behind them and the group share.
+
+The use cases are defined in the `USE_CASES` list in the page script. Adding one means one entry naming its factors.
+
+### AI query endpoint (API only) ([agent/spatial_agent.py](src/geohealth_etl/agent/spatial_agent.py))
+
+The AI box has been removed from the page, but `POST /api/query` still works for API users: the question and the table schema go to `gpt-4o-mini`, which returns an explanation and a read-only SQL query (checked to be `SELECT`/`WITH` only), and matching tracts come back as GeoJSON.
 
 The agent's instructions in [agent/prompt.py](src/geohealth_etl/agent/prompt.py) are generated from the factor catalogue, so every new factor (with its percentile and theme columns) can be queried automatically. It knows that "worst 20% for X" means `X_pctile >= 80`.
 
@@ -157,11 +177,34 @@ One row per 2020 census tract in Middlesex County (357 tracts).
 | `lisa_cluster`, `lisa_pvalue` | Local Moran's I classification and pseudo p-value |
 | `geometry` | MultiPolygon, SRID 4326 |
 
+## Publishing as a static website
+
+Once built, the map doesn't need a server or database: everything (colours, burden recalculation, "Who's affected", priority rankings) runs in the browser from a few data files. `geohealth export` writes them:
+
+```
+site/
+├── index.html            # the same page the local server uses
+└── data/
+    ├── tracts.geojson    # 357 tracts: simplified outlines + every factor value, percentile and score
+    ├── factors.json      # factor catalogue (labels, themes, units, sources)
+    └── meta.json         # "data as of" date and source list (shown under the page title)
+```
+
+- **Size:** about 0.25 MB compressed in total (tracts 1.3 MB raw → 0.22 MB as served), down from 0.62 MB for the full-detail outlines.
+- **Simplification:** outlines are simplified with `shapely.coverage_simplify`, which simplifies all tracts *together*, so neighbouring tracts still share identical borders (no gaps or overlaps). At the default 10 m tolerance, 38% of the corner points remain and the median tract outline changes by about 0.1% of its area.
+- **Preview:** `python3 -m http.server 8080 --directory site`, then open <http://localhost:8080>. Visitors to a *hosted* site don't need this; the host is the web server. It's only needed locally, because browsers block a page opened straight from disk (`file://`) from loading the separate `data/` files.
+- **Single file (`--single-file`):** writes `site/geohealth-map.html`, one file (~1.4 MB, ~0.25 MB zipped) with the data embedded. It opens by **double-click**, as an **email attachment** or from a **shared drive**, with no server. It still needs internet for the map library and basemap tiles, and copies don't update themselves, so re-export and re-send after `geohealth etl`.
+- **Publish:** upload the `site/` folder to any static host, e.g. GitHub Pages (commit `site/` or publish it from a `gh-pages` branch), Netlify or Cloudflare Pages (drag and drop), or a city or organisation web server.
+- **Update:** `geohealth etl`, then `geohealth export`, then re-upload.
+- **One page for every setup:** the page first looks for data embedded in the file (single-file export), and otherwise reads `data/factors.json`, `data/tracts.geojson` and `data/meta.json` from relative paths. `geohealth serve` serves those paths from PostGIS (full detail), and the folder export writes them as files, so there's only one `index.html`.
+- **What still comes from the internet:** the MapLibre library (unpkg.com) and the CARTO Positron basemap tiles. CARTO's free basemaps are fine for modest traffic and require the attribution the map already shows.
+
 ## API
 
 | Endpoint | Description |
 |---|---|
 | `GET /` | Map explorer |
+| `GET /data/factors.json`, `/data/tracts.geojson`, `/data/meta.json` | What the page reads (same files as the static export) |
 | `GET /api/factors` | The factor catalogue: themes, and each factor's label, unit, direction, source and type |
 | `GET /api/tracts` | All tracts with factor, percentile, score and cluster fields as a GeoJSON FeatureCollection. Columns missing from an older table are skipped. |
 | `POST /api/query` | Body `{"question": "..."}` → `{explanation, sql, match_count, geojson}` |
@@ -182,7 +225,8 @@ One row per 2020 census tract in Middlesex County (357 tracts).
 - **Data years differ:** EJScreen 2024 (frozen, since EPA discontinued it), tree canopy 2021, ACS 2018–2022, USDA atlas 2019, OpenStreetMap as of each run.
 - **Diet estimates are rough:** the NHANES model's individual-level cross-validated error is about 29 percentage points. Tract estimates reflect demographic composition only, not local food access.
 - **mRFEI = 0 is ambiguous:** it can mean no healthy outlets, or no outlets at all. The burden scoring leaves tracts with no food outlets unranked on mRFEI, so they aren't counted as food swamps. When you query `mrfei_score` directly, check `healthy_outlet + less_healthy_outlet` first.
-- **The AI agent can be wrong:** review the generated SQL shown in the sidebar before relying on a result.
+- **Priority lists are a starting point:** they rank tracts on the measures listed above with equal weights. Check the tract profile and talk to residents before committing resources.
+- **The AI endpoint (API only) can be wrong:** review the generated SQL it returns before relying on a result.
 - **Not reproducible over time:** each `etl` run downloads current OpenStreetMap data, and the diet model retrains on every run.
 
 ## Troubleshooting
@@ -192,7 +236,7 @@ One row per 2020 census tract in Middlesex County (357 tracts).
 | `Connection refused` on port 5432 | The database container stopped: `docker compose up -d` |
 | `No module named 'psycopg'` | `DATABASE_URL` is missing the driver prefix; use `postgresql+psycopg2://...` |
 | `CENSUS_API_KEY is not set` | Add the key to `.env`, and make sure you clicked the activation email |
-| `OpenAIError: Missing credentials` | Add `OPENAI_API_KEY` to `.env` |
+| `OpenAIError: Missing credentials` (from `/api/query`) | Add `OPENAI_API_KEY` to `.env` |
 | `/api/tracts` errors with a missing `cluster_*` column | The table was built by an older version without clustering; run `uv run geohealth cluster` (or `etl`) |
 | Map menus missing new factors | The table was built before the factor update; run `uv run geohealth etl` |
 | ETL pauses at step 4 ("Fetching OpenStreetMap food and alcohol...") | The public Overpass server's status check currently fails, so OSMnx waits 60 seconds between attempts. It's only slow the first time; the result is cached in `cache/` |
@@ -205,6 +249,8 @@ src/geohealth_etl/
 ├── config.py           # Study area, CRS, env vars (.env loaded here), cache folder
 ├── factors.py          # Factor catalogue: every measure's label, theme, unit, direction, source
 ├── db.py               # PostGIS read/write + indexes
+├── tract_data.py       # Builds the page's data (tract GeoJSON, catalogue, meta) for serve and export
+├── export.py           # `geohealth export`: static site in site/
 ├── etl/
 │   ├── pipeline.py     # ETL orchestration
 │   ├── source.py       # TIGER, CDC PLACES, USDA, OSM food fetchers
